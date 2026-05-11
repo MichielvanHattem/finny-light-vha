@@ -1,5 +1,5 @@
-# Profiel: interne demo — MCP-only
-# Identiek aan youngtech_mcp_only qua capability, maar met andere display + prompt.
+# Profiel: interne demo - MCP-only
+# Cluster 2 update 11 mei 2026: capability_status_meta + scenario_with_facts toegevoegd.
 
 profile_id = "demo_mcp_only"
 display_name = "Demo (interne testomgeving, MCP-only)"
@@ -19,6 +19,10 @@ csv_history = false
 xaf_auditfile = false
 multi_year_comparison = false
 
+# Toegevoegd 11 mei 2026 (TESTSET v2):
+capability_status_meta = true
+scenario_with_facts = true
+
 historical_years_supported = false
 requires_refusal_on_missing_history = true
 
@@ -27,6 +31,8 @@ allowed_question_scopes = [
     "recent_transactions",
     "customer_debtors",
     "supplier_creditors",
+    "capability_status",
+    "scenario_analysis",
 ]
 
 [refusal_policy]

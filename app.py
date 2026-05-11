@@ -1,31 +1,20 @@
-"""finny-app/app.py — Streamlit UI Fase A.
-
-Minimale UI conform ChatGPT-eindadvies 10 mei 2026:
-- Geen upload-sectie (PDF/CSV/XAF zijn in deze tier niet relevant)
-- Geen verborgen loaders
-- Geen UI-element dat historie suggereert in YoungTech-tier
-- Toon profile_id + enabled_sources + core_version + adapter_versions in beheermodus
-- Fail-fast bij startup als profiel inconsistent is of credentials ontbreken
-- REFUSED wordt expliciet weergegeven met missing_capability + reden
-"""
+"""finny-app/app.py - Streamlit UI Fase A (cluster 1-5 fixes 11 mei 2026)."""
 from __future__ import annotations
 
 import json
 import logging
 import os
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 import streamlit as st
 
-# Maak finny-app-root + finny_core importeerbaar
 _HERE = Path(__file__).parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-# finny_core: probeer subdir (deploy) en zustermap (lokale dev)
 for candidate in (_HERE / "finny_core" / "src", _HERE.parent / "finny_core" / "src"):
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
@@ -45,16 +34,15 @@ from profiles.schema import Profile, QuestionScope, SourceType
 from llm import OpenAIError, call_openai, pick_chat_model
 
 
-APP_VERSION = "0.1.0a0"
+APP_VERSION = "0.1.0a1"
 LOG = logging.getLogger("finny_app")
 
 try:
-    from finny_core import __version__ as FINNY_CORE_VERSION  # type: ignore
+    from finny_core import __version__ as FINNY_CORE_VERSION
 except Exception:
     FINNY_CORE_VERSION = "unknown"
 
 
-# ============================================================ Auth (minimaal)
 def login_gate() -> bool:
     if st.session_state.get("authenticated"):
         return True
@@ -74,32 +62,18 @@ def login_gate() -> bool:
     return False
 
 
-# ============================================================ Tenant resolution
 def resolve_tenant_id() -> str:
-    """Tenant-ID komt uit secrets — niet uit URL-parameter (anti-spoofing).
-
-    Voor Fase A: één tenant per Streamlit-deployment (Secrets bepaalt welke).
-    Voor Fase D met multi-tenant: tenant uit Entra-token na SSO-login.
-    """
     tenant_id = st.secrets.get("ACTIVE_TENANT_ID", "")
     if not tenant_id:
-        st.error(
-            "Geen ACTIVE_TENANT_ID in Streamlit Secrets. Zet deze deployment om naar "
-            "één tenant via secrets — runtime-keuze is een spoofing-risico."
-        )
+        st.error("Geen ACTIVE_TENANT_ID in Streamlit Secrets.")
         st.stop()
     return tenant_id
 
 
-# ============================================================ Startup (fail-fast)
 @st.cache_resource(show_spinner=False)
-def startup(tenant_id: str) -> tuple[Profile, SourceLoader]:
-    """Eén keer per Streamlit-sessie: profiel laden + adapters valideren.
-
-    Faalt hard als profiel inconsistent is of credentials ontbreken.
-    """
+def startup(tenant_id: str):
     profile = load_active_profile(tenant_id)
-    secrets_dict: dict[str, str] = {
+    secrets_dict = {
         "EBOEKHOUDEN_TOKEN": st.secrets.get("EBOEKHOUDEN_TOKEN", ""),
         "OPENAI_API_KEY": st.secrets.get("OPENAI_API_KEY", ""),
     }
@@ -108,10 +82,9 @@ def startup(tenant_id: str) -> tuple[Profile, SourceLoader]:
     return profile, loader
 
 
-# ============================================================ Sidebar (beheermodus)
-def render_sidebar(profile: Profile, loader: SourceLoader) -> None:
+def render_sidebar(profile, loader) -> None:
     with st.sidebar:
-        st.header(f"Finny {APP_VERSION}")
+        st.header("Finny " + APP_VERSION)
         st.caption(profile.display_name)
         st.divider()
         st.markdown("**Configuratie**")
@@ -132,43 +105,107 @@ def render_sidebar(profile: Profile, loader: SourceLoader) -> None:
         st.divider()
         st.caption("Mogelijke vragen in deze tier:")
         for scope in profile.allowed_question_scopes:
-            st.caption(f"• {scope.value}")
+            st.caption("- " + scope.value)
 
 
-# ============================================================ Refusal-renderer
-def render_refusal(
-    profile: Profile,
-    classified,
-    missing_capability: str,
-    explanation: str,
-) -> None:
-    """Render REFUSED netjes — geen vriendelijke PARTIAL-tekst toelaten."""
+def render_refusal(profile, classified, missing_capability, explanation) -> str:
     template = profile.refusal_policy.refusal_message_template
     msg = template.format(
         profile_id=profile.profile_id,
         missing_capability=missing_capability,
         explanation=explanation,
     )
-    st.error(f"**[Niet beantwoord — buiten deze configuratie]**\n\n{msg}")
+    user_facing_text = "**[Niet beantwoord - buiten deze configuratie]**\n\n" + msg
+    st.error(user_facing_text)
     with st.expander("Waarom niet?"):
+        required = ", ".join(s.value for s in profile.required_sources_for_scope(classified.scope))
+        enabled = ", ".join(s.value for s in profile.enabled_sources)
         st.markdown(
-            f"- **Vraag-classificatie:** `{classified.scope.value}`\n"
-            f"- **Ontbrekende capability:** `{missing_capability}`\n"
-            f"- **Vereiste bronnen voor deze vraag:** "
-            f"`{', '.join(s.value for s in profile.required_sources_for_scope(classified.scope))}`\n"
-            f"- **Actief in deze configuratie:** "
-            f"`{', '.join(s.value for s in profile.enabled_sources)}`"
+            "- **Vraag-classificatie:** `" + classified.scope.value + "`\n"
+            "- **Ontbrekende capability:** `" + missing_capability + "`\n"
+            "- **Vereiste bronnen voor deze vraag:** `" + required + "`\n"
+            "- **Actief in deze configuratie:** `" + enabled + "`"
         )
+    return user_facing_text
 
 
-# ============================================================ Answering-pad
-def answer_with_mcp(
-    profile: Profile,
-    loader: SourceLoader,
-    question: str,
-    classified,
-) -> dict[str, Any]:
-    """Hier komt later de finny_core pipeline-call. Voor Fase A skeleton-response."""
+def _user_facing_error_message(exc: Exception) -> str:
+    return (
+        "Ik kon je boekhouding op dit moment niet uitlezen. "
+        "Dit kan een tijdelijke verbindings- of synchronisatiestoring zijn. "
+        "Probeer het over een minuut opnieuw. Blijft het mislukken, "
+        "controleer of je e-Boekhouden-koppeling actief is of laat het weten."
+    )
+
+
+def handle_capability_status(profile, loader, question):
+    bronnen = ", ".join(s.value for s in profile.enabled_sources) or "geen"
+    huidig_jaar = date.today().year
+    cap_lijst = "\n".join("- " + s.value for s in profile.allowed_question_scopes)
+
+    all_refusable = [
+        QuestionScope.FORECAST_REQUEST,
+        QuestionScope.TAX_ADVICE_REQUEST,
+        QuestionScope.LEGAL_ADVICE_REQUEST,
+        QuestionScope.YEAR_END_FINANCIAL_STATEMENT,
+        QuestionScope.MULTI_YEAR_COMPARISON,
+        QuestionScope.BALANCE_HISTORICAL,
+        QuestionScope.AUDIT_TRAIL,
+    ]
+    niet_lines = ["- " + s.value for s in all_refusable if not profile.can_answer_scope(s)]
+    niet_lijst = "\n".join(niet_lines) or "- (alle scopes ondersteund)"
+
+    last_sync_iso = st.session_state.get("last_sync_iso")
+    if last_sync_iso:
+        try:
+            sync_label = datetime.fromisoformat(last_sync_iso).strftime("%d-%m-%Y %H:%M")
+        except Exception:
+            sync_label = last_sync_iso
+    else:
+        sync_label = "nog niet gesynced in deze sessie"
+
+    historisch = "ja" if profile.historical_years_supported else "nee (alleen lopend jaar)"
+    answer = (
+        "**Wat ik kan in deze configuratie (" + profile.display_name + ")**\n\n"
+        "- Actieve bronnen: " + bronnen + "\n"
+        "- Lopend boekjaar: " + str(huidig_jaar) + "\n"
+        "- Historische jaren: " + historisch + "\n"
+        "- Laatste synchronisatie: " + sync_label + "\n"
+        "- Soorten vragen die ik kan beantwoorden:\n" + cap_lijst + "\n\n"
+        "**Wat ik NIET kan in deze configuratie**\n" + niet_lijst + "\n\n"
+        "Voor scenario-vragen of fiscaal/juridisch advies: neem contact op met je "
+        "accountant. Voor historische jaarrekeningen: vraag om een volledige tier."
+    )
+    return {
+        "mode": "META",
+        "answer": answer,
+        "trace": {
+            "scope": QuestionScope.CAPABILITY_STATUS.value,
+            "no_adapter_call": True,
+            "profile_id": profile.profile_id,
+            "tier": profile.tier.value,
+            "enabled_sources": [s.value for s in profile.enabled_sources],
+            "allowed_scopes": [s.value for s in profile.allowed_question_scopes],
+            "adapter_versions": loader.adapter_versions,
+            "last_sync_iso": last_sync_iso,
+            "raw_question": question,
+        },
+    }
+
+
+_SCENARIO_PROMPT_OVERLAY = (
+    "\n\n[SCENARIO-MODUS] De gebruiker stelt een beslissings- of scenariovraag. "
+    "Je MAG GEEN scenario-doorrekening, voorspelling of toekomst-aanname maken. "
+    "Antwoord-patroon: (1) erken de vraag, (2) leg uit dat scenario-rekenlogica "
+    "in deze configuratie niet beschikbaar is, (3) toon WEL de actuele feiten uit "
+    "de administratie die relevant zijn voor deze afweging (bv. cashpositie, "
+    "RC-stand, openstaande crediteuren, lopende kosten), (4) verwijs voor het "
+    "scenario-gesprek naar de accountant. Geen als-dan-analyses, geen "
+    "het-lijkt-me-verstandig-uitspraken."
+)
+
+
+def answer_with_mcp(profile, loader, question, classified):
     from adapters.base import SourceQuery
 
     adapter = loader.get(SourceType.MCP_EBOEKHOUDEN)
@@ -181,51 +218,70 @@ def answer_with_mcp(
     try:
         result = adapter.retrieve(query)
     except Exception as exc:
+        LOG.error("Adapter retrieve failed: %s", exc, exc_info=True)
         return {
             "mode": "ERROR",
-            "answer": f"Adapter-fout: {exc}",
-            "trace": {"error": str(exc)},
+            "answer": _user_facing_error_message(exc),
+            "trace": {
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "stage": "adapter.retrieve",
+            },
         }
+
+    st.session_state["last_sync_iso"] = result.retrieved_at.isoformat()
 
     payload = result.normalized_payload
     mutations = payload.get("mutations", [])
     n_mut = len(mutations)
 
-    # Bouw context voor LLM
     sample_lines = []
     for m in mutations[:25]:
-        sample_lines.append(
-            f"- {m.get('date','?')}: {m.get('description','')} | "
-            f"{m.get('ledgerCode','?')} | EUR {m.get('amount','?')}"
-        )
+        d = m.get("date", "?")
+        desc = m.get("description", "")
+        ledger = m.get("ledgerCode", "?")
+        amount = m.get("amount", "?")
+        sample_lines.append("- " + str(d) + ": " + str(desc) + " | " + str(ledger) + " | EUR " + str(amount))
+
+    period_from = result.period[0].isoformat()
+    period_to = result.period[1].isoformat()
     context_block = (
-        f"PROFIEL: {profile.profile_id} (tier {profile.tier.value})\n"
-        f"BRON: {result.quality.traceability}\n"
-        f"PERIODE: {result.period[0].isoformat()} t/m {result.period[1].isoformat()}\n"
-        f"AANTAL MUTATIES: {n_mut}\n"
-        f"FRESHNESS: {result.quality.freshness.value}\n"
-        f"VERTROUWEN: {result.quality.extraction_confidence:.2f}\n\n"
-        f"EERSTE {min(n_mut,25)} MUTATIES:\n" + "\n".join(sample_lines)
+        "PROFIEL: " + profile.profile_id + " (tier " + profile.tier.value + ")\n"
+        "BRON: " + result.quality.traceability + "\n"
+        "PERIODE: " + period_from + " t/m " + period_to + "\n"
+        "AANTAL MUTATIES: " + str(n_mut) + "\n"
+        "FRESHNESS: " + result.quality.freshness.value + "\n"
+        "VERTROUWEN: " + format(result.quality.extraction_confidence, ".2f") + "\n\n"
+        "EERSTE " + str(min(n_mut, 25)) + " MUTATIES:\n" + "\n".join(sample_lines)
     )
 
     system_prompt = _load_system_prompt(profile)
+    if classified.scope == QuestionScope.SCENARIO_ANALYSIS:
+        system_prompt = system_prompt + _SCENARIO_PROMPT_OVERLAY
+
     api_key = st.secrets.get("OPENAI_API_KEY", "")
     configured_model = st.secrets.get("OPENAI_MODEL", "auto")
 
     try:
         chosen_model = pick_chat_model(api_key, configured_model)
     except OpenAIError as exc:
+        LOG.error("LLM init failed: %s", exc, exc_info=True)
         return {
             "mode": "ERROR",
-            "answer": f"LLM-init faalde: {exc}",
-            "trace": {"error": str(exc), "configured_model": configured_model},
+            "answer": _user_facing_error_message(exc),
+            "trace": {
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "configured_model": configured_model,
+                "stage": "llm.pick_chat_model",
+            },
         }
 
     answer = call_openai(
         api_key=api_key,
         model=chosen_model,
         system_prompt=system_prompt,
-        user_prompt=f"VRAAG: {question}\n\nCONTEXT:\n{context_block}",
+        user_prompt="VRAAG: " + question + "\n\nCONTEXT:\n" + context_block,
     )
     return {
         "mode": "ANSWERED",
@@ -233,7 +289,7 @@ def answer_with_mcp(
         "trace": {
             "source_id": result.source_id,
             "source_type": result.source_type,
-            "period": [result.period[0].isoformat(), result.period[1].isoformat()],
+            "period": [period_from, period_to],
             "retrieved_at": result.retrieved_at.isoformat(),
             "quality": {
                 "freshness": result.quality.freshness.value,
@@ -243,12 +299,13 @@ def answer_with_mcp(
             "raw_reference": result.raw_reference,
             "llm_model_used": chosen_model,
             "llm_model_configured": configured_model,
+            "scope": classified.scope.value,
+            "scenario_overlay_applied": classified.scope == QuestionScope.SCENARIO_ANALYSIS,
         },
     }
 
 
-def _load_system_prompt(profile: Profile) -> str:
-    """Laad system-prompt op basis van profiel-config. Met fallback naar base.md."""
+def _load_system_prompt(profile) -> str:
     candidates = [
         _HERE / profile.prompt_policy.base_template_path,
         _HERE / "prompts" / "base.md",
@@ -259,12 +316,11 @@ def _load_system_prompt(profile: Profile) -> str:
                 return p.read_text(encoding="utf-8")
             except Exception:
                 continue
-    return "Je bent Finny — een financiële AI-assistent. Antwoord alleen op basis van de aangereikte context."
+    return "Je bent Finny - een financiele AI-assistent. Antwoord alleen op basis van de aangereikte context."
 
 
-# ============================================================ Main
 def main() -> None:
-    st.set_page_config(page_title=f"Finny {APP_VERSION}", layout="wide")
+    st.set_page_config(page_title="Finny " + APP_VERSION, layout="wide")
     if not login_gate():
         return
 
@@ -272,18 +328,33 @@ def main() -> None:
     try:
         profile, loader = startup(tenant_id)
     except TenantNotMappedError as exc:
-        st.error(f"Tenant-mapping ontbreekt: {exc}")
+        st.error("Tenant-mapping ontbreekt: " + str(exc))
         return
     except (InconsistentProfileError, AdapterImportError, AdapterCredentialsError) as exc:
-        st.error(f"**Startup faalt — fail-fast validatie:**\n\n{exc}")
+        st.error("**Startup faalt - fail-fast validatie:**\n\n" + str(exc))
         return
     except SourceLoaderError as exc:
-        st.error(f"Onverwachte loader-fout: {exc}")
+        st.error("Onverwachte loader-fout: " + str(exc))
         return
 
     render_sidebar(profile, loader)
-    st.title(f"Finny — {profile.display_name}")
-    st.caption(f"Stel een vraag binnen je {profile.tier.value}-configuratie.")
+    st.title("Finny - " + profile.display_name)
+
+    huidig_jaar = date.today().year
+    last_sync_iso = st.session_state.get("last_sync_iso")
+    if last_sync_iso:
+        try:
+            sync_label = datetime.fromisoformat(last_sync_iso).strftime("%d-%m-%Y %H:%M")
+        except Exception:
+            sync_label = last_sync_iso
+    else:
+        sync_label = "nog niet gesynced (eerste vraag start synchronisatie)"
+    st.caption(
+        "**Administratie:** " + profile.display_name + " - "
+        "**Boekjaar:** " + str(huidig_jaar) + " (lopend) - "
+        "**Laatst opgehaald:** " + sync_label
+    )
+    st.caption("Stel een vraag binnen je " + profile.tier.value + "-configuratie.")
 
     if "messages" not in st.session_state:
         st.session_state["messages"] = []
@@ -300,24 +371,29 @@ def main() -> None:
 
         classified = classify_question_scope(q, profile)
 
-        # Capability-check vóór retrieval
         if not profile.can_answer_scope(classified.scope):
             with st.chat_message("assistant"):
                 missing_cap = classified.scope.value
                 explanation = (
-                    f"Je vraag valt onder scope '{classified.scope.value}', "
-                    f"maar dit profiel heeft daarvoor geen actieve bron-adapter."
+                    "Je vraag valt onder scope '" + classified.scope.value + "', "
+                    "maar dit profiel heeft daarvoor geen actieve bron-adapter."
                 )
-                render_refusal(profile, classified, missing_cap, explanation)
-            st.session_state["messages"].append(
-                {"role": "assistant", "content": f"[REFUSED — {classified.scope.value}]"}
-            )
+                refusal_text = render_refusal(profile, classified, missing_cap, explanation)
+            st.session_state["messages"].append({"role": "assistant", "content": refusal_text})
             return
 
-        # Future jaartal → ook hard refused
         if classified.is_future(profile.historical_years_supported and 2099 or date.today().year):
             with st.chat_message("assistant"):
                 st.warning("Toekomstige jaartallen kunnen niet beantwoord worden.")
+            return
+
+        if classified.scope == QuestionScope.CAPABILITY_STATUS:
+            with st.chat_message("assistant"):
+                meta_response = handle_capability_status(profile, loader, q)
+                st.markdown(meta_response["answer"])
+                with st.expander("Calculation trace"):
+                    st.json(meta_response["trace"])
+            st.session_state["messages"].append({"role": "assistant", "content": meta_response["answer"]})
             return
 
         with st.chat_message("assistant"):
@@ -329,9 +405,7 @@ def main() -> None:
                 st.markdown(response["answer"])
             with st.expander("Calculation trace"):
                 st.json(response["trace"])
-        st.session_state["messages"].append(
-            {"role": "assistant", "content": response["answer"]}
-        )
+        st.session_state["messages"].append({"role": "assistant", "content": response["answer"]})
 
 
 if __name__ == "__main__":

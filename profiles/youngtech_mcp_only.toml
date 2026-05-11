@@ -1,39 +1,37 @@
-# Profiel: YoungTech zelfboeker — MCP-only tier
-#
-# Capability contract — bron van waarheid voor wat YoungTech-tenants mogen.
-# Versiebeheer: bewerkingen aan dit bestand vereisen PR-review (geen secrets-edit).
+# Profiel: YoungTech zelfboeker - MCP-only tier
+# Cluster 2 update 11 mei 2026: capability_status_meta toegevoegd, scenario_with_facts UIT.
 
 profile_id = "youngtech_mcp_only"
 display_name = "YoungTech (zelfboeker, MCP-only)"
 tier = "youngtech"
 schema_version = 1
 
-# Welke adapters actief zijn — bepaalt welke imports gebeuren.
 enabled_sources = ["mcp_eboekhouden"]
 
-# Capability contract.
 [capabilities]
 current_bookkeeping = true
 recent_transactions = true
 customer_debtors = true
 supplier_creditors = true
 
-# Bewust UIT in deze tier:
 historical_pdf_analysis = false
 csv_history = false
 xaf_auditfile = false
 multi_year_comparison = false
 
+# Toegevoegd 11 mei 2026 (TESTSET v2):
+capability_status_meta = true
+scenario_with_facts = false
+
 historical_years_supported = false
 requires_refusal_on_missing_history = true
 
-# Welke vraag-scopes deze tier expliciet mag beantwoorden.
-# Wordt automatisch afgeleid uit capabilities, maar hier expliciet voor traceability.
 allowed_question_scopes = [
     "current_bookkeeping",
     "recent_transactions",
     "customer_debtors",
     "supplier_creditors",
+    "capability_status",
 ]
 
 [refusal_policy]
@@ -47,6 +45,4 @@ prompt_policy_id = "youngtech_mcp_only_v1"
 base_template_path = "prompts/youngtech.md"
 capability_description = "Je gebruikt e-Boekhouden via MCP/REST voor lopende boekhoudvragen. Historische jaarrekeningen, multi-jaar-vergelijkingen of XAF-auditfiles vallen buiten deze configuratie en moet je vriendelijk weigeren."
 
-# Anti-spoofing: welke tenants mogen dit profiel kiezen.
-# Wordt door tenant_profile_map.toml gekoppeld; hier expliciet als veiligheidsklep.
-allowed_for_tenants = []  # Leeg = wildcard, mits tenant_profile_map het profiel toewijst.
+allowed_for_tenants = []
