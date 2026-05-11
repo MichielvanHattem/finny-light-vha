@@ -1,0 +1,25 @@
+# Core runtime — altijd nodig
+streamlit>=1.32
+pandas>=2.0
+pydantic>=2.0
+pyyaml>=6.0
+tomli>=2.0;python_version<"3.11"
+
+# MCP-tier (YoungTech, demo): alleen MCP/REST e-Boekhouden
+requests>=2.31
+
+# LLM
+openai>=1.40
+anthropic>=0.40
+
+# Auth (optioneel, USE_TOTP=false default)
+pyotp>=2.9
+
+# Synonyms-matching
+rapidfuzz>=3.0
+
+# Development + tests
+pytest>=8.0
+
+# NB: PDF/CSV/XAF-libraries (pypdf, lxml, etc.) zitten BEWUST NIET in deze requirements.
+# Die komen pas in pyproject.toml als optional-dependencies "full" voor Fase C.

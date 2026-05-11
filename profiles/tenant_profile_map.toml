@@ -1,0 +1,18 @@
+# Tenant → Profile mapping (anti-spoofing).
+#
+# Dit bestand staat in versiebeheer. Secrets bevatten ALLEEN credentials per tenant.
+# Welk PROFIEL een tenant krijgt is een productlogica-keuze, geen runtime-instelling.
+#
+# Format:
+# [<tenant_id>]
+# profile_id = "<profile_id>"
+# display_name = "<menselijke naam>"
+
+[demo]
+profile_id = "demo_mcp_only"
+display_name = "Demo-tenant (intern)"
+
+# Voorbeeld YoungTech-tenant — pas aan bij echte klant-onboarding:
+# [klant_youngtech_001]
+# profile_id = "youngtech_mcp_only"
+# display_name = "YoungTech klant 001"

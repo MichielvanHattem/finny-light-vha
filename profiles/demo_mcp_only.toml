@@ -1,0 +1,43 @@
+# Profiel: interne demo — MCP-only
+# Identiek aan youngtech_mcp_only qua capability, maar met andere display + prompt.
+
+profile_id = "demo_mcp_only"
+display_name = "Demo (interne testomgeving, MCP-only)"
+tier = "demo"
+schema_version = 1
+
+enabled_sources = ["mcp_eboekhouden"]
+
+[capabilities]
+current_bookkeeping = true
+recent_transactions = true
+customer_debtors = true
+supplier_creditors = true
+
+historical_pdf_analysis = false
+csv_history = false
+xaf_auditfile = false
+multi_year_comparison = false
+
+historical_years_supported = false
+requires_refusal_on_missing_history = true
+
+allowed_question_scopes = [
+    "current_bookkeeping",
+    "recent_transactions",
+    "customer_debtors",
+    "supplier_creditors",
+]
+
+[refusal_policy]
+refuse_if_required_source_missing = true
+explain_missing_capability = true
+suggest_upgrade_tier = false
+refusal_message_template = "Demo-configuratie heeft alleen MCP/REST e-Boekhouden voor het lopende boekjaar. {missing_capability} is in deze demo niet beschikbaar."
+
+[prompt_policy]
+prompt_policy_id = "demo_mcp_only_v1"
+base_template_path = "prompts/demo.md"
+capability_description = "Demo-versie met alleen MCP/REST e-Boekhouden voor het lopende boekjaar. Geen historie, geen jaarrekening-PDF, geen XAF."
+
+allowed_for_tenants = []
