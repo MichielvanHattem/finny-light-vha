@@ -1,26 +1,12 @@
-"""Profielschema - capability contract.
-
-Cluster 2 fix 11 mei 2026 (na ChatGPT-audit op TESTSET v1):
-- QuestionScope uitgebreid met FORECAST_REQUEST, TAX_ADVICE_REQUEST,
-  LEGAL_ADVICE_REQUEST, SCENARIO_ANALYSIS, CAPABILITY_STATUS, UNRECOGNIZED_INTENT.
-- Capabilities uitgebreid met capability_status_meta (default True) en
-  scenario_with_facts (default False, per profiel aan/uit).
-
-ChatGPT-eindadvies 10 mei 2026:
-- enabled_sources mag GEEN vrijblijvende featureflag zijn.
-- Profiel wordt bij startup hard gevalideerd. Bij inconsistentie: app start niet.
-- Vraag buiten capability -> REFUSED met heldere uitleg, NIET PARTIAL.
-"""
+"""Profielschema - capability contract (cluster 2 fix 11 mei 2026)."""
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Tier(str, Enum):
-    """Product-tiers conform 24-april-architectuur."""
     YOUNGTECH = "youngtech"
     DEMO = "demo"
     STANDARD = "standard"
@@ -29,11 +15,6 @@ class Tier(str, Enum):
 
 
 class QuestionScope(str, Enum):
-    """Vraagtypen die een profiel mag beantwoorden.
-
-    De question-classifier mapt elke binnenkomende vraag op een van deze scopes.
-    Als de scope niet in `allowed_question_scopes` van het profiel staat -> REFUSED.
-    """
     CURRENT_BOOKKEEPING = "current_bookkeeping"
     RECENT_TRANSACTIONS = "recent_transactions"
     YEAR_END_FINANCIAL_STATEMENT = "year_end_financial_statement"
@@ -42,8 +23,6 @@ class QuestionScope(str, Enum):
     AUDIT_TRAIL = "audit_trail"
     CUSTOMER_DEBTORS = "customer_debtors"
     SUPPLIER_CREDITORS = "supplier_creditors"
-
-    # Toegevoegd 11 mei 2026 (cluster 2 - ChatGPT TESTSET-audit):
     FORECAST_REQUEST = "forecast_request"
     TAX_ADVICE_REQUEST = "tax_advice_request"
     LEGAL_ADVICE_REQUEST = "legal_advice_request"
@@ -53,7 +32,6 @@ class QuestionScope(str, Enum):
 
 
 class SourceType(str, Enum):
-    """Adapter-types die kunnen worden geactiveerd."""
     MCP_EBOEKHOUDEN = "mcp_eboekhouden"
     CSV_EBOEKHOUDEN = "csv_eboekhouden"
     PDF_JAARREKENING = "pdf_jaarrekening"
@@ -61,7 +39,6 @@ class SourceType(str, Enum):
 
 
 class Capabilities(BaseModel):
-    """Wat dit profiel KAN. Harde productlogica."""
     current_bookkeeping: bool = False
     recent_transactions: bool = False
     historical_pdf_analysis: bool = False
@@ -70,11 +47,10 @@ class Capabilities(BaseModel):
     multi_year_comparison: bool = False
     customer_debtors: bool = False
     supplier_creditors: bool = False
-    # Toegevoegd 11 mei 2026:
     capability_status_meta: bool = True
     scenario_with_facts: bool = False
 
-    def to_question_scopes(self) -> set:
+    def to_question_scopes(self):
         scopes = set()
         if self.current_bookkeeping:
             scopes.add(QuestionScope.CURRENT_BOOKKEEPING)
@@ -141,22 +117,52 @@ class Profile(BaseModel):
             raise ValueError("profile_id moet lowercase zijn")
         return v
 
+    @field_validator("enabled_sources", mode="before")
+    @classmethod
+    def coerce_enabled_sources(cls, v):
+        if not isinstance(v, list):
+            return v
+        out = []
+        for item in v:
+            if isinstance(item, SourceType):
+                out.append(item)
+            elif isinstance(item, str):
+                out.append(SourceType(item))
+            else:
+                out.append(item)
+        return out
+
+    @field_validator("allowed_question_scopes", mode="before")
+    @classmethod
+    def coerce_allowed_scopes(cls, v):
+        if not isinstance(v, list):
+            return v
+        out = []
+        for item in v:
+            if isinstance(item, QuestionScope):
+                out.append(item)
+            elif isinstance(item, str):
+                out.append(QuestionScope(item))
+            else:
+                out.append(item)
+        return out
+
     @model_validator(mode="after")
     def validate_consistency(self):
         if not self.allowed_question_scopes:
             self.allowed_question_scopes = sorted(self.capabilities.to_question_scopes())
 
         capability_to_required_source = {
-            "current_bookkeeping":      {SourceType.MCP_EBOEKHOUDEN},
-            "recent_transactions":      {SourceType.MCP_EBOEKHOUDEN, SourceType.CSV_EBOEKHOUDEN},
-            "historical_pdf_analysis":  {SourceType.PDF_JAARREKENING},
-            "csv_history":              {SourceType.CSV_EBOEKHOUDEN},
-            "xaf_auditfile":            {SourceType.XAF},
-            "multi_year_comparison":    {SourceType.CSV_EBOEKHOUDEN, SourceType.PDF_JAARREKENING, SourceType.XAF},
-            "customer_debtors":         {SourceType.MCP_EBOEKHOUDEN},
-            "supplier_creditors":       {SourceType.MCP_EBOEKHOUDEN},
-            "capability_status_meta":   set(),
-            "scenario_with_facts":      {SourceType.MCP_EBOEKHOUDEN, SourceType.CSV_EBOEKHOUDEN},
+            "current_bookkeeping": {SourceType.MCP_EBOEKHOUDEN},
+            "recent_transactions": {SourceType.MCP_EBOEKHOUDEN, SourceType.CSV_EBOEKHOUDEN},
+            "historical_pdf_analysis": {SourceType.PDF_JAARREKENING},
+            "csv_history": {SourceType.CSV_EBOEKHOUDEN},
+            "xaf_auditfile": {SourceType.XAF},
+            "multi_year_comparison": {SourceType.CSV_EBOEKHOUDEN, SourceType.PDF_JAARREKENING, SourceType.XAF},
+            "customer_debtors": {SourceType.MCP_EBOEKHOUDEN},
+            "supplier_creditors": {SourceType.MCP_EBOEKHOUDEN},
+            "capability_status_meta": set(),
+            "scenario_with_facts": {SourceType.MCP_EBOEKHOUDEN, SourceType.CSV_EBOEKHOUDEN},
         }
         active_sources = set(self.enabled_sources)
         cap_dict = self.capabilities.model_dump()
@@ -167,13 +173,11 @@ class Profile(BaseModel):
             required_set = capability_to_required_source.get(cap_name, set())
             if required_set and not (required_set & active_sources):
                 violations.append(
-                    "capability '" + cap_name + "' staat aan, maar geen enkele vereiste adapter "
-                    "(" + ", ".join(s.value for s in required_set) + ") is enabled. "
-                    "Actieve adapters: " + (str([s.value for s in active_sources]) if active_sources else "geen")
+                    "capability '" + cap_name + "' staat aan, maar geen vereiste adapter is enabled."
                 )
         if violations:
             raise ValueError(
-                "Profiel '" + self.profile_id + "' heeft inconsistente capability - adapter mapping:\n  - "
+                "Profiel '" + self.profile_id + "' inconsistente capability/adapter mapping:\n  - "
                 + "\n  - ".join(violations)
             )
 
@@ -186,20 +190,19 @@ class Profile(BaseModel):
         if historical_caps and not self.historical_years_supported:
             raise ValueError(
                 "Profiel '" + self.profile_id + "': capability voor historische data staat aan, "
-                "maar historical_years_supported=False. Inconsistent."
+                "maar historical_years_supported=False."
             )
         if not historical_caps and self.historical_years_supported:
             raise ValueError(
-                "Profiel '" + self.profile_id + "': historical_years_supported=True maar geen "
-                "historische capability is enabled. Inconsistent."
+                "Profiel '" + self.profile_id + "': historical_years_supported=True maar geen historische capability enabled."
             )
         return self
 
-    def can_answer_scope(self, scope) -> bool:
+    def can_answer_scope(self, scope):
         return scope in self.allowed_question_scopes
 
-    def required_sources_for_scope(self, scope) -> set:
-        scope_to_sources = {
+    def required_sources_for_scope(self, scope):
+        m = {
             QuestionScope.CURRENT_BOOKKEEPING: {SourceType.MCP_EBOEKHOUDEN},
             QuestionScope.RECENT_TRANSACTIONS: {SourceType.MCP_EBOEKHOUDEN},
             QuestionScope.YEAR_END_FINANCIAL_STATEMENT: {SourceType.PDF_JAARREKENING},
@@ -215,4 +218,4 @@ class Profile(BaseModel):
             QuestionScope.CAPABILITY_STATUS: set(),
             QuestionScope.SCENARIO_ANALYSIS: {SourceType.MCP_EBOEKHOUDEN},
         }
-        return scope_to_sources.get(scope, set())
+        return m.get(scope, set())
